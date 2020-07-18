@@ -2,10 +2,9 @@ package RedisStateStore
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/go-redis/redis"
 	faasflow "github.com/faasflow/sdk"
+	"github.com/go-redis/redis"
 )
 
 type RedisStateStore struct {
@@ -19,13 +18,11 @@ type Incrementer interface {
 	Incr(key string, value int64) (int64, error)
 }
 
-func GetRedisStateStore(address, sentinelName string) (faasflow.StateStore, error) {
+func GetRedisStateStore(redisUri string) (faasflow.StateStore, error) {
 	stateStore := &RedisStateStore{}
 
-	addrs := strings.Split(address, ",")
-	client := redis.NewUniversalClient(&redis.UniversalOptions{
-		MasterName: sentinelName,
-		Addrs:      addrs,
+	client := redis.NewClient(&redis.Options{
+		Addr: redisUri,
 	})
 
 	err := client.Ping().Err()
