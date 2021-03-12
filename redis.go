@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	faasflow "github.com/faasflow/sdk"
-	"github.com/go-redis/redis"
+	redis "github.com/go-redis/redis"
 )
 
 type RedisStateStore struct {
@@ -35,53 +35,51 @@ func GetRedisStateStore(redisUri string) (faasflow.StateStore, error) {
 }
 
 // Configure
-func (this *RedisStateStore) Configure(flowName string, requestId string) {
-	this.KeyPath = fmt.Sprintf("faasflow.%s.%s", flowName, requestId)
+func (rss *RedisStateStore) Configure(flowName string, requestId string) {
+	rss.KeyPath = fmt.Sprintf("faasflow.%s.%s", flowName, requestId)
 }
 
 // Init (Called only once in a request)
-func (this *RedisStateStore) Init() error {
+func (rss *RedisStateStore) Init() error {
 	return nil
 }
 
 // Update Compare and Update a valuer
-func (this *RedisStateStore) Update(key string, oldValue string, newValue string) error {
-	key = this.KeyPath + "." + key
-	client := this.rds
-
-	err := client.Watch(func(tx *redis.Tx) error {
-		value, err := tx.Get(key).Result()
-		if err == redis.Nil {
-			err = fmt.Errorf("[%v] not exist", key)
-			return err
-		} else if err != nil {
-			err = fmt.Errorf("unexpect error %v", err)
-			return err
-		}
-		if value != oldValue {
-			err = fmt.Errorf("Old value doesn't match for key %s", key)
-			return err
-		}
-		_, err = tx.Pipelined(func(pl redis.Pipeliner) error {
-			pl.Set(key, newValue, 0)
-			return nil
-		})
-		return err
-	}, key)
-	return err
+func (rss *RedisStateStore) Update(key string, oldValue string, newValue string) error {
+	key = rss.KeyPath + "." + key
+	client := rss.rds
+	script :=  redis.NewScript(`
+		if redis.call('GET', KEYS[1]) == ARGV[1] then
+			redis.call('SET', KEYS[1], ARGV[2]);
+			return 0;
+		end
+		return 1;
+	`)
+	cmd := script.Run(client, []string{key}, oldValue, newValue)
+	if cmd.Err() != nil {
+		return fmt.Errorf("failed to set key %s, error %v", key, cmd.Err())
+	}
+	success, err := cmd.Int()
+	if err != nil {
+		return fmt.Errorf("failed to set key %s, error %v", key, err)
+	}
+	if success != 0 {
+		return fmt.Errorf("failed to set key %s, error %v", key, err)
+	}
+	return nil
 }
 
 // Update Compare and Update a valuer
-func (this *RedisStateStore) Incr(key string, value int64) (int64, error) {
-	key = this.KeyPath + "." + key
-	client := this.rds
+func (rss *RedisStateStore) Incr(key string, value int64) (int64, error) {
+	key = rss.KeyPath + "." + key
+	client := rss.rds
 	return client.IncrBy(key, value).Result()
 }
 
 // Set Sets a value (override existing, or create one)
-func (this *RedisStateStore) Set(key string, value string) error {
-	key = this.KeyPath + "." + key
-	client := this.rds
+func (rss *RedisStateStore) Set(key string, value string) error {
+	key = rss.KeyPath + "." + key
+	client := rss.rds
 	err := client.Set(key, value, 0).Err()
 	if err != nil {
 		return fmt.Errorf("failed to set key %s, error %v", key, err)
@@ -90,9 +88,9 @@ func (this *RedisStateStore) Set(key string, value string) error {
 }
 
 // Get Gets a value
-func (this *RedisStateStore) Get(key string) (string, error) {
-	key = this.KeyPath + "." + key
-	client := this.rds
+func (rss *RedisStateStore) Get(key string) (string, error) {
+	key = rss.KeyPath + "." + key
+	client := rss.rds
 	value, err := client.Get(key).Result()
 	if err == redis.Nil {
 		return "", fmt.Errorf("failed to get key %s, nil", key)
@@ -104,9 +102,9 @@ func (this *RedisStateStore) Get(key string) (string, error) {
 }
 
 // Cleanup (Called only once in a request)
-func (this *RedisStateStore) Cleanup() error {
-	key := this.KeyPath + ".*"
-	client := this.rds
+func (rss *RedisStateStore) Cleanup() error {
+	key := rss.KeyPath + ".*"
+	client := rss.rds
 	var rerr error
 
 	iter := client.Scan(0, key, 0).Iterator()
